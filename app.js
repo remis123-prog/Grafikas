@@ -115,9 +115,11 @@ function getGoogleDriveUrls(fileId) {
 
 // CORS proxy sąrašas - jei vienas neveikia, bandomas kitas
 const CORS_PROXIES = [
+    (url) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
+    (url) => `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`,
     (url) => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}`,
     (url) => `https://corsproxy.io/?${encodeURIComponent(url)}`,
-    (url) => `https://cors.eu.org/${url}`,
+    (url) => `https://thingproxy.freeboard.io/fetch/${url}`,
 ];
 
 function convertOneDriveUrl(url) {
@@ -130,12 +132,34 @@ async function tryFetch(downloadUrl, label) {
     const separator = downloadUrl.includes('?') ? '&' : '?';
     const finalUrl = downloadUrl + separator + cacheBuster;
     console.log(`[${label}] Fetching:`, finalUrl);
-    const response = await fetch(finalUrl);
+    
+    // Timeout 8s, kad nestrigtų ilgai ties mirusiu proxy
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 8000);
+
+    let response;
+    try {
+        response = await fetch(finalUrl, { signal: controller.signal });
+    } finally {
+        clearTimeout(timeoutId);
+    }
+
     if (!response.ok) {
         throw new Error(`${label}: HTTP ${response.status}`);
     }
-    const text = await response.text();
-    // Patikrinti ar gavome JSON, ne HTML
+    let text = await response.text();
+
+    // Jei proxy (pvz. allorigins.win/get) grąžina wrapper objektą {"contents": "..."}
+    try {
+        const wrapper = JSON.parse(text);
+        if (wrapper && typeof wrapper.contents === 'string') {
+            text = wrapper.contents;
+        }
+    } catch {
+        // Ne wrapperis, tęsiame
+    }
+
+    // Patikrinti ar gavome JSON, ne HTML klaidos puslapį
     if (text.trim().startsWith('<')) {
         throw new Error(`${label}: Gautas HTML vietoj JSON`);
     }
